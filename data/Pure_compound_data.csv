@@ -1,0 +1,20 @@
+name,formula,smiles,UNIFAC_Do groups
+benzene,C6H6,c1ccccc1,{9:6}
+n-hexane,C6H14,CCCCCC,"{1:2, 2:4}"
+n-heptane,C7H16,CCCCCCC,"{1:2, 2:5}"
+n-octane,C8H18,CCCCCCCC,"{1:2, 2:6}"
+n-nonane,C9H20,CCCCCCCCC,"{1:2, 2:7}"
+n-decane,C10H22,CCCCCCCCCC,"{1:2, 2:8}"
+1-hexene,C6H12,C=CCCCC,"{1:1, 2:3, 5:1}"
+n-butane,C4H10,CCCC,"{1:2, 2:2}"
+2-butene,C4H8,CC=CC,"{1:1, 2:1, 5:1}"
+1-heptene,C7H14,CCCCCC=C,"{1:1, 2:4, 5:1}"
+n-propane,C3H8,CCC,"{1:2, 2:1}"
+propene,C3H6,C=CC,"{1:1, 5:1}"
+methanol,CH4O,CO,{15:1}
+ethanol,C2H6O,CCO,"{1:1, 2:1, 14:1}"
+n-propanol,C3H8O,CCCO,"{1:1, 2:2, 14:1}"
+2-propanol,C3H8O,CC(C)O,"{1:2, 3:1, 81:1}"
+acetone,C3H6O,CC(C)=O,"{1:1, 18:1}"
+2-butanone,C4H8O,CCC(C)=O,"{1:1, 2:1, 18:1}"
+water,H2O,O,{16:1}
