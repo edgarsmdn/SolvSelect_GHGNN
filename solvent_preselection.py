@@ -14,13 +14,30 @@ import pandas as pd
 from scipy.optimize import minimize_scalar
 import warnings
 import ast
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-from thermo.unifac import UNIFAC
 from GHGNN import GH_GNN
 import os
 
 _df_antoine = pd.read_csv('data/Antoine_constants.csv')
+
+def get_selectivity(gamma_inf_i:float, gamma_inf_j:float):
+    '''
+    Computes the selectivity from actvity coefficients of key components
+
+    Parameters
+    ----------
+    gamma_inf_i : float
+        Activity coefficient at infinite dilution of solute i in the solvent.
+    gamma_inf_j : float
+        Activity coefficient at infinite dilution of solute j in the solvent.
+
+    Returns
+    -------
+    s_ij : float
+        Selectivity of compound i over compound j.
+
+    '''
+    s_ij = gamma_inf_i/gamma_inf_j
+    return s_ij
 
 def get_compound(name:str, df_comp):
     df = df_comp[df_comp['name'] == name]
