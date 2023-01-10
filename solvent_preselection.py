@@ -14,30 +14,13 @@ import pandas as pd
 from scipy.optimize import minimize_scalar
 import warnings
 import ast
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from thermo.unifac import UNIFAC
 from GHGNN import GH_GNN
 import os
 
 _df_antoine = pd.read_csv('data/Antoine_constants.csv')
-
-def get_selectivity(gamma_inf_i:float, gamma_inf_j:float):
-    '''
-    Computes the selectivity from actvity coefficients of key components
-
-    Parameters
-    ----------
-    gamma_inf_i : float
-        Activity coefficient at infinite dilution of solute i in the solvent.
-    gamma_inf_j : float
-        Activity coefficient at infinite dilution of solute j in the solvent.
-
-    Returns
-    -------
-    s_ij : float
-        Selectivity of compound i over compound j.
-
-    '''
-    s_ij = gamma_inf_i/gamma_inf_j
-    return s_ij
 
 def get_compound(name:str, df_comp):
     df = df_comp[df_comp['name'] == name]
@@ -438,3 +421,347 @@ class solvent_preselection():
         df_results.insert(0, 'Solvent_SMILES', solvents)
         df_results.insert(1, 'Solvent_name', solvents_names)
         df_results.to_csv('results/'+mixture_type+'/'+mixture+'_minSF.csv', index=False)
+
+
+    
+
+
+
+    
+def get_selectivity(gamma_inf_i:float, gamma_inf_j:float):
+    '''
+    Computes the selectivity from actvity coefficients of key components
+
+    Parameters
+    ----------
+    gamma_inf_i : float
+        Activity coefficient at infinite dilution of solute i in the solvent.
+    gamma_inf_j : float
+        Activity coefficient at infinite dilution of solute j in the solvent.
+
+    Returns
+    -------
+    s_ij : float
+        Selectivity of compound i over compound j.
+
+    '''
+    s_ij = gamma_inf_i/gamma_inf_j
+    return s_ij
+
+
+
+
+def normalize_entrainer_free(x_i, y_i, x_j, y_j):
+    # Normalization to entrainer-free basis
+    x_i = x_i/(x_i + x_j)
+    y_i = y_i/(y_i + y_j)
+    x_j = 1-x_i
+    y_j = 1-y_i
+    return (x_i, y_i), (x_j, y_j)
+    
+
+def get_pseudo_binary_VLE_isothermal(c_i:dict, c_j:dict, T:float, 
+                                     margules_system, SF:float):
+    '''
+    Computes the vapor and liquid fractions of the key components in the 
+    pseudo-binary VLE at the given temperature
+
+    Parameters
+    ----------
+    c_i : dict
+        Info of component i
+    c_j : dict
+        Info of component j
+    T : float
+        Temperature of the system in K.
+    margules_system : class
+        Initialized margules system with the corresponding 6 infinite dilution 
+        activity coefficient values.
+    SF : float
+        Solvent to feed ratio.
+
+    Returns
+    -------
+    tuple
+        liquid and vapor fraction of components i and j 
+        (x_i, y_i), (x_j, y_j).
+
+    '''
+    x_i, x_j, x_k = get_xs_for_SF(SF)
+    
+    gamma_i, gamma_j, gamma_k = margules_system.get_gammas(x_i, x_j, x_k)
+    
+    smiles_i,  smiles_j = c_i['smiles'], c_j['smiles']
+    
+    Ai, Bi, Ci = get_Antoine_constants(smiles_i, T)
+    Aj, Bj, Cj = get_Antoine_constants(smiles_j, T)
+    
+    P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+    P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+    
+    p_i = x_i*gamma_i*P_i
+    p_j = x_j*gamma_j*P_j
+    P   = p_i + p_j
+    
+    y_i = p_i/P
+    y_j = p_j/P
+    
+    (x_i, y_i), (x_j, y_j) = normalize_entrainer_free(x_i, y_i, x_j, y_j)
+    
+    relative_volatilities = get_relative_volatility(P_i, P_j, gamma_i, gamma_j)
+    
+    return [(x_i, y_i), (x_j, y_j)], relative_volatilities
+
+def get_pseudo_binary_VLE_isothermal_thermo(c_i:dict, c_j:dict, c_k:dict, T:float,
+                                            SF:float, model:str):
+    
+    x_i, x_j, x_k = get_xs_for_SF(SF)
+    
+    Ai, Bi, Ci = get_Antoine_constants(c_i['smiles'], T)
+    Aj, Bj, Cj = get_Antoine_constants(c_j['smiles'], T)
+    P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+    P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+    
+    y_i, y_j = np.zeros(x_i.shape[0]), np.zeros(x_i.shape[0])
+    gamma_i = np.zeros(x_i.shape[0])
+    gamma_j = np.zeros(x_i.shape[0])
+    for i in range(x_i.shape[0]):
+        xs = [x_i[i], x_j[i], x_k[i]]
+        
+        if model == 'UNIFAC_Do':
+            GE = UNIFAC.from_subgroups(chemgroups=[c_i['UNIFAC_Do groups'], c_j['UNIFAC_Do groups'], c_k['UNIFAC_Do groups']], 
+                                        T=T, 
+                                        xs=xs, 
+                                        version=1)
+        else:
+            pass
+        
+        
+        gamma_1, gamma_2, gamma_3 = GE.gammas()
+        p_i = x_i[i]*gamma_1*P_i
+        p_j = x_j[i]*gamma_2*P_j
+        P_calc   = p_i + p_j
+        
+        y_i[i] = p_i/P_calc
+        y_j[i] = p_j/P_calc
+        
+        gamma_i[i] = gamma_1
+        gamma_j[i] = gamma_2
+        
+    (x_i, y_i), (x_j, y_j) = normalize_entrainer_free(x_i, y_i, x_j, y_j)
+    
+    relative_volatilities = get_relative_volatility(P_i, P_j, gamma_i, gamma_j)
+    
+    return [(x_i, y_i), (x_j, y_j)], relative_volatilities
+
+def get_pseudo_binary_VLE_isobaric_thermo(c_i:dict, c_j:dict, c_k:dict, P:float,
+                                            SF:float, bounds, model:str):
+    
+    x_i, x_j, x_k = get_xs_for_SF(SF)
+    
+    # Optimization
+    p_is = np.zeros(x_i.shape[0])
+    p_js = np.zeros(x_i.shape[0])
+    for i in tqdm(range(x_i.shape[0])):
+        xs = [x_i[i], x_j[i], x_k[i]]
+        
+        def error_in_P(T, P_true=P):
+            
+            Ai, Bi, Ci = get_Antoine_constants(c_i['smiles'], T)
+            Aj, Bj, Cj = get_Antoine_constants(c_j['smiles'], T)
+            
+            P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+            P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+            
+            if model == 'UNIFAC_Do':
+                GE = UNIFAC.from_subgroups(chemgroups=[c_i['UNIFAC_Do groups'], c_j['UNIFAC_Do groups'], c_k['UNIFAC_Do groups']], 
+                                            T=T, 
+                                            xs=xs, 
+                                            version=1)
+            else:
+                pass
+            
+            
+            gamma_i, gamma_j, gamma_k = GE.gammas()
+            
+            p_i = x_i[i]*gamma_i*P_i
+            p_j = x_j[i]*gamma_j*P_j
+            P_calc   = p_i + p_j
+            
+            return np.abs(P_calc - P_true)
+        
+        results = minimize_scalar(error_in_P, bounds=bounds, method='bounded')
+        
+        T = results.x
+        
+        Ai, Bi, Ci = get_Antoine_constants(c_i['smiles'], T)
+        Aj, Bj, Cj = get_Antoine_constants(c_j['smiles'], T)
+        
+        P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+        P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+        
+        if model == 'UNIFAC_Do':
+            GE = UNIFAC.from_subgroups(chemgroups=[c_i['UNIFAC_Do groups'], c_j['UNIFAC_Do groups'], c_k['UNIFAC_Do groups']], 
+                                        T=T, 
+                                        xs=xs, 
+                                        version=1)
+        else:
+            pass
+        
+        gamma_i, gamma_j, gamma_k = GE.gammas()
+        
+        p_is[i] = x_i[i]*gamma_i*P_i
+        p_js[i] = x_j[i]*gamma_j*P_j
+    
+    y_i = p_is/P
+    y_j = p_js/P
+
+    (x_i, y_i), (x_j, y_j) = normalize_entrainer_free(x_i, y_i, x_j, y_j)
+    
+    return (x_i, y_i), (x_j, y_j)
+    
+
+def get_pseudo_binary_VLE_isobaric(c_i:dict, c_j:dict, P:float, 
+                                     gh_gnn_models:list, SF:float, bounds):
+    '''
+    Computes the vapor and liquid fractions of the key components in the 
+    pseudo-binary VLE at the given pressure in bar
+
+    Parameters
+    ----------
+    c_i : dict
+        Info of component i
+    c_j : dict
+        Info of component j
+    P : float
+        Pressure of the system in bar.
+    gh_gnn_models : list
+        Collection of GH-GNN models.
+    SF : float
+        Solvent to feed ratio.
+    bounds : tuple
+        Temperature bounds
+
+    Returns
+    -------
+    tuple
+        liquid and vapor fraction of components i and j 
+        (x_i, y_i), (x_j, y_j).
+
+    '''
+    x_i, x_j, x_k = get_xs_for_SF(SF)
+    smiles_i,  smiles_j = c_i['smiles'], c_j['smiles']
+    
+    # Optimization
+    p_is = np.zeros(x_i.shape[0])
+    p_js = np.zeros(x_i.shape[0])
+    for i in tqdm(range(x_i.shape[0])):
+    
+        def error_in_P(T, P_true=P):
+            
+            Ai, Bi, Ci = get_Antoine_constants(smiles_i, T)
+            Aj, Bj, Cj = get_Antoine_constants(smiles_j, T)
+            
+            P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+            P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+            
+            gammas = get_gammas_GHGNN(gh_gnn_models, T=T, AD=None)
+            system = margules_system(*gammas)
+            
+            gamma_i, gamma_j, gamma_k = system.get_gammas(x_i[i], x_j[i], x_k[i])
+            
+            p_i = x_i[i]*gamma_i*P_i
+            p_j = x_j[i]*gamma_j*P_j
+            P_calc   = p_i + p_j
+            
+            return np.abs(P_calc - P_true)
+        
+        results = minimize_scalar(error_in_P, bounds=bounds, method='bounded', options={'maxiter':2000})
+        
+        T = results.x
+        
+        Ai, Bi, Ci = get_Antoine_constants(smiles_i, T)
+        Aj, Bj, Cj = get_Antoine_constants(smiles_j, T)
+        
+        P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+        P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+        
+        gammas = get_gammas_GHGNN(gh_gnn_models, T=T, AD=None)
+        system = margules_system(*gammas)
+        
+        gamma_i, gamma_j, gamma_k = system.get_gammas(x_i[i], x_j[i], x_k[i])
+        
+        p_is[i] = x_i[i]*gamma_i*P_i
+        p_js[i] = x_j[i]*gamma_j*P_j
+        
+    y_i = p_is/P
+    y_j = p_js/P
+    
+    (x_i, y_i), (x_j, y_j) = normalize_entrainer_free(x_i, y_i, x_j, y_j)
+    
+    return (x_i, y_i), (x_j, y_j)
+
+
+        
+
+def plot_pseudoVLE(SFs, VLEs_lst, exp_lst, c_1, c_2, c_3, T_P, 
+                              folder_figures, mode, model):
+    # Set the default color cycle
+    mpl.rcParams['axes.prop_cycle'] = mpl.cycler(color=['#b3cde0', '#6497b1', '#005b96', '#03396c', '#011f4b']) 
+    mks = ['*', '^', 's', 'd', 'x']
+    
+    fig = plt.figure(figsize=(6,5))
+    plt.plot([0,1], [0,1], 'k--', label='x=y')
+    for i, SF in enumerate(SFs):
+        (x_i, y_i), (x_j, y_j) = VLEs_lst[i]
+        plt.plot(x_i, y_i, '-', label='SF ' + str(SF))
+        
+    for i, d in enumerate(exp_lst):
+        sf_exp = d['SF']
+        df_exp = d['df']
+        plt.plot(df_exp['x'], df_exp['y'], 'k'+mks[i], label='Exp. SF='+str(sf_exp))
+    ax = plt.gca()
+    ax.yaxis.get_ticklocs(minor=True)
+    ax.minorticks_on()
+    plt.xlim(0,1)
+    plt.ylim(0,1)
+    plt.xlabel('Molar liquid fraction ' + c_1['name'], fontsize=14)
+    plt.ylabel('Molar vapor fraction ' + c_1['name'], fontsize=14)
+    plt.legend(ncol=2)
+    if mode == 'T':
+        plt.title(f'Isothermal pseudo-binary VLE at {T_P} K ', fontsize=14)
+        fig_name = '/'+model+'_isothermal_'+str(T_P)
+    elif mode == 'P':
+        plt.title(f'Isobaric pseudo-binary VLE at {T_P} bar ', fontsize=14)
+        fig_name = '/'+model+'_isobaric_'+str(T_P)
+    plt.close(fig)
+    name = c_1['name'] + ',' + c_2['name'] + ',' + c_3['name']
+    fig.savefig(folder_figures+fig_name+'_'+name+'.png', dpi=300, format='png')
+    fig.savefig(folder_figures+fig_name+'_'+name+'.svg', dpi=300, format='svg')
+    
+def plot_relative_vola_SFs(SFs, alphas_lst, VLEs_lst, c_1, c_2, c_3, T, 
+                              folder_figures, model):
+    # Set the default color cycle
+    mpl.rcParams['axes.prop_cycle'] = mpl.cycler(color=['#b3cde0', '#6497b1', '#005b96', '#03396c', '#011f4b']) 
+    fig = plt.figure(figsize=(6,5))
+    for i, SF in enumerate(SFs):
+        (x_i, y_i), (x_j, y_j) = VLEs_lst[i]
+        alphas = alphas_lst[i]
+        plt.plot(x_i, alphas, '-', label='SF ' + str(SF))
+    ax = plt.gca()
+    ax.yaxis.get_ticklocs(minor=True)
+    ax.minorticks_on()
+    plt.xlim(0,1)
+    plt.xlabel('Molar liquid fraction ' + c_1['name'], fontsize=14)
+    plt.ylabel('Pseudo-relative volatility ', fontsize=14)
+    plt.legend(ncol=2)
+    plt.title(f'Isothermal pseudo-relative volatility at {T} K ', fontsize=14)
+    fig_name = '/'+model+'_isothermal_RV_'+str(T)
+    
+    plt.close(fig)
+    name = c_1['name'] + ',' + c_2['name'] + ',' + c_3['name']
+    fig.savefig(folder_figures+fig_name+'_'+name+'.png', dpi=300, format='png')
+    #fig.savefig(folder_figures+fig_name+'_'+name+'.svg', dpi=300, format='svg')
+    
+            
+   
