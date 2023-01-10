@@ -53,6 +53,8 @@ sp.screen_with_minSF()
 
 ```
 
+You could also give a star :star: to this repo!
+
 ### License
 
 Note that this code has an [MIT license](https://github.com/edgarsmdn/SolvSelect_GHGNN/blob/main/LICENSE) that needs to be respected at all times
