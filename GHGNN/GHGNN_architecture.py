@@ -175,12 +175,7 @@ class GHGNN_model(nn.Module):
         self.mlp2b = nn.Linear(hidden_dim, hidden_dim)
         self.mlp3b = nn.Linear(hidden_dim, 1)
         
-        # MLP for C
-        self.mlp1c = nn.Linear(hidden_dim*4, hidden_dim)
-        self.mlp2c = nn.Linear(hidden_dim, hidden_dim)
-        self.mlp3c = nn.Linear(hidden_dim, 1)
-        
-        
+          
     def generate_sys_graph(self, x, edge_attr, batch_size, n_mols=2):
         
         src = np.arange(batch_size)
@@ -199,7 +194,7 @@ class GHGNN_model(nn.Module):
         sys_graph = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
         return sys_graph
 
-    def forward(self, solvent, solute, T):
+    def forward(self, solvent, solute, T, constants=False):
         
         # Molecular descriptors based on MOSCED model
         
@@ -306,8 +301,6 @@ class GHGNN_model(nn.Module):
         xg = self.global_conv1(binary_sys_graph)
         xg = torch.cat((xg[0:len(xg)//2,:], xg[len(xg)//2:,:]), axis=1)
         
-        T = T.x.reshape(-1,1) + 273.15
-        
         A = F.relu(self.mlp1a(xg))
         A = F.relu(self.mlp2a(A))
         A = self.mlp3a(A)   
@@ -316,14 +309,32 @@ class GHGNN_model(nn.Module):
         B = F.relu(self.mlp2b(B))
         B = self.mlp3b(B)
         
-        C = F.relu(self.mlp1c(xg*T))
-        C = F.relu(self.mlp2c(C))
-        C = self.mlp3c(C)
+        C_norm = A
+        D_norm = B
         
-        output = A + B/T + C
+        C_min = -2.91058307855874 
+        C_max = 29.1066045841922
         
+        D_min = -3.97198033957307 
+        D_max = 4.8134735224616
+
         
-        return output    
+        C = C_norm*(C_max - C_min) + C_min
+        D = D_norm*(D_max - D_min) + D_min
+        
+        T1 = 303.15
+        T2 = 363.15
+        
+        B = D*2*T1*T2/(T2-T1)
+        A = C - B*(T1 + T2)/(2*T1*T2)
+        
+        if constants:
+            return A, B
+        else:
+            T = T.x.reshape(-1,1) + 273.15
+            output = A + B/T
+            return output
+        
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

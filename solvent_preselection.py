@@ -164,11 +164,20 @@ def get_gh_gnn_models(c_1, c_2, c_3):
     gh_gnn_models = [gh_gnn_12, gh_gnn_21, gh_gnn_13, gh_gnn_31, gh_gnn_23, gh_gnn_32]
     return gh_gnn_models
 
-def get_gammas_GHGNN(gh_gnn_models, T, AD):
+def get_gammas_GHGNN(K1s, K2s, T):
     ln_gs = []
-    for gh_gnn in gh_gnn_models:
-        ln_gs.append(gh_gnn.predict(T=T, AD=AD))
+    for K1, K2 in zip(K1s, K2s):
+        ln_g = K1 + K2/T
+        ln_gs.append(ln_g)
     return ln_gs
+
+def get_constants_GHGNN(gh_gnn_models):
+    K1s, K2s = [], []
+    for gh_gnn in gh_gnn_models:
+        K1, K2 = gh_gnn.predict(T=0, constants=True) # Rememeber T is a dumb T here
+        K1s.append(K1)
+        K2s.append(K2)
+    return K1s, K2s
 
 class margules_system():
     def __init__(self, ln_g_12:float, ln_g_21:float, 
@@ -244,6 +253,21 @@ class solvent_preselection():
         if not os.path.exists(self.results_folder):
             os.makedirs(self.results_folder)
         
+    def get_vapor_pressures(self, c_i, c_j, Ts):
+        n_Ts = len(Ts)
+        # Get vapor pressures for all temperatures
+        P_i_lst = np.zeros(n_Ts)
+        P_j_lst = np.zeros(n_Ts)
+        for t, T in enumerate(Ts):
+            # Compute vapor pressures
+            Ai, Bi, Ci = get_Antoine_constants(c_i['smiles'], T)
+            P_i_lst[t] = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+            
+            Aj, Bj, Cj = get_Antoine_constants(c_j['smiles'], T)
+            P_j_lst[t] = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+        return P_i_lst, P_j_lst
+        
+    
     def screen_with_rv(self, n_Ts=10):
         
         mixture = self.mixture
@@ -267,53 +291,66 @@ class solvent_preselection():
             os.makedirs(self.results_folder + mixture_type)
 
         relative_volatilities_inf = np.zeros((len(solvents), len(Ts)))
-        for t, T in enumerate(Ts):
-            print('---> Temperature (K): ', T)
+        
+        # Get vapor pressures for all temperatures
+        P_i_lst, P_j_lst = self.get_vapor_pressures(c_i, c_j, Ts)
+        
+        # Check whether AD was computed before, in case not get storage
+        if AD is not None:
+            print('\n ------ > Computing AD')
+            ad_file = self.results_folder + mixture_type + '/' + mixture + '_AD_' + AD + '.csv'
+            if os.path.exists(ad_file):
+                print(' ------ > AD already exists!\n')
+                AD = None
+            else:
+                n_class_i_storage = np.zeros(len(solvents))
+                n_class_j_storage = np.zeros(len(solvents))
+                max_10_sim_i_storage = np.zeros(len(solvents))
+                max_10_sim_j_storage = np.zeros(len(solvents))
+        
+        for s, solvent in enumerate(tqdm(solvents)):
+            # Initialize GH-GNN models
+            GH_GNN_i = GH_GNN(c_i['smiles'], solvent)
+            GH_GNN_j = GH_GNN(c_j['smiles'], solvent)
             
-            # Compute vapor pressures
-            Ai, Bi, Ci = get_Antoine_constants(c_i['smiles'], T)
-            P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+            # Get AD
+            if AD == 'both':
+                feasible_sys_i, n_class_i_storage[s], max_10_sim_i_storage[s] = GH_GNN_i.get_AD(AD=AD)
+                feasible_sys_j, n_class_j_storage[s], max_10_sim_j_storage[s] = GH_GNN_j.get_AD(AD=AD) 
+            elif AD is None:
+                pass
+            else:
+                raise Exception('Current implementation only supports AD="both" or AD=None')
+                
+            # Get K1 and K2 constants, the temperature pass here could be any float or int
+            K1_i, K2_i = GH_GNN_i.predict(T=0, constants=True)
+            K1_j, K2_j = GH_GNN_j.predict(T=0, constants=True)
+        
+            for t, T in enumerate(Ts):
+                
+                P_i = P_i_lst[t]
+                P_j = P_j_lst[t]
+                
+                ln_gamma_inf_i = K1_i + K2_i/T
+                ln_gamma_inf_j = K1_j + K2_j/T
             
-            Aj, Bj, Cj = get_Antoine_constants(c_j['smiles'], T)
-            P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
-            
-            if AD is not None:
-                print('\n ------ > Computing AD')
-                ad_file = self.results_folder + mixture_type + '/' + mixture + '_AD_' + AD + '.csv'
-                if os.path.exists(ad_file):
-                    print(' ------ > AD already exists!\n')
-                    AD = None
-                else:
-                    n_class_i_storage = np.zeros(len(solvents))
-                    n_class_j_storage = np.zeros(len(solvents))
-                    max_10_sim_i_storage = np.zeros(len(solvents))
-                    max_10_sim_j_storage = np.zeros(len(solvents))
-            
-            for s, solvent in enumerate(tqdm(solvents)):
-                if AD == 'both':
-                    ln_gamma_inf_i, feasible_sys_i, n_class_i_storage[s], max_10_sim_i_storage[s] = GH_GNN(c_i['smiles'], solvent).predict(T=T, AD=AD)
-                    ln_gamma_inf_j, feasible_sys_j, n_class_j_storage[s], max_10_sim_j_storage[s] = GH_GNN(c_j['smiles'], solvent).predict(T=T, AD=AD) 
-                elif AD is None:
-                    ln_gamma_inf_i = GH_GNN(c_i['smiles'], solvent).predict(T=T, AD=AD)
-                    ln_gamma_inf_j = GH_GNN(c_j['smiles'], solvent).predict(T=T, AD=AD)
-                else:
-                    raise Exception('Current implementation only supports AD="both" or AD=None')
                 gamma_inf_i = np.exp(ln_gamma_inf_i)
                 gamma_inf_j = np.exp(ln_gamma_inf_j)
+                
                 a_inf = get_relative_volatility(P_i, P_j, gamma_inf_i, gamma_inf_j)
                 relative_volatilities_inf[s, t] = a_inf
                 
-            if AD is not None:
-                df_AD = pd.DataFrame({
-                    'Solvent_SMILES':solvents,
-                    'Solvent_name':solvents_names,
-                    'n_class_i': n_class_i_storage,
-                    'n_class_j': n_class_j_storage,
-                    'max_10_sim_i': max_10_sim_i_storage,
-                    'max_10_sim_j': max_10_sim_j_storage,
-                    })
-                df_AD.to_csv(ad_file, index=False)
-                print(' ------ > AD computed!\n')
+        if AD is not None:
+            df_AD = pd.DataFrame({
+                'Solvent_SMILES':solvents,
+                'Solvent_name':solvents_names,
+                'n_class_i': n_class_i_storage,
+                'n_class_j': n_class_j_storage,
+                'max_10_sim_i': max_10_sim_i_storage,
+                'max_10_sim_j': max_10_sim_j_storage,
+                })
+            df_AD.to_csv(ad_file, index=False)
+            print(' ------ > AD computed!\n')
 
         df_results = pd.DataFrame(relative_volatilities_inf, columns=Ts)
         df_results.insert(0, 'Solvent_SMILES', solvents)
@@ -343,47 +380,65 @@ class solvent_preselection():
             os.makedirs(self.results_folder + mixture_type)
             
         minSFs = np.zeros((len(solvents), len(Ts)))
-        for t, T in enumerate(Ts):
-            print('---> Temperature (K): ', T)
+        
+        # Get vapor pressures for all temperatures
+        P_i_lst, P_j_lst = self.get_vapor_pressures(c_i, c_j, Ts)
+        
+        # Check whether AD was computed before, in case not get storage
+        if AD is not None:
+            print('\n ------ > Computing AD')
+            ad_file = self.results_folder + mixture_type + '/' + mixture + '_AD_' + AD + '.csv'
+            if os.path.exists(ad_file):
+                print(' ------ > AD already exists!\n')
+                AD = None
+            else:
+                n_class_i_storage = np.zeros(len(solvents))
+                n_class_j_storage = np.zeros(len(solvents))
+                max_10_sim_i_storage = np.zeros(len(solvents))
+                max_10_sim_j_storage = np.zeros(len(solvents))
+        
+        for s, solvent in enumerate(tqdm(solvents)):
+            # Initialize GH-GNN models
+            c_k = {'smiles': solvent} 
+            gh_gnn_models = get_gh_gnn_models(c_i, c_j, c_k)
             
-            # Compute vapor pressures
-            Ai, Bi, Ci = get_Antoine_constants(c_i['smiles'], T)
-            P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
+            GH_GNN_i = gh_gnn_models[2]
+            GH_GNN_j = gh_gnn_models[4]
             
-            Aj, Bj, Cj = get_Antoine_constants(c_j['smiles'], T)
-            P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
+            # Get AD
+            if AD == 'both':
+                feasible_sys_i, n_class_i_storage[s], max_10_sim_i_storage[s] = GH_GNN_i.get_AD(AD=AD)
+                feasible_sys_j, n_class_j_storage[s], max_10_sim_j_storage[s] = GH_GNN_j.get_AD(AD=AD) 
+            elif AD is None:
+                pass
+            else:
+                raise Exception('Current implementation only supports AD="both" or AD=None')
+        
+            # Get K1 and K2 constants
+            K1s, K2s = get_constants_GHGNN(gh_gnn_models)
             
-            if AD is not None:
-                print('\n ------ > Computing AD')
-                ad_file = self.results_folder + mixture_type + '/' + mixture + '_AD_' + AD + '.csv'
-                if os.path.exists(ad_file):
-                    print(' ------ > AD already exists!\n')
-                    AD = None
-                else:
-                    n_class_i_storage = np.zeros(len(solvents))
-                    n_class_j_storage = np.zeros(len(solvents))
-                    max_10_sim_i_storage = np.zeros(len(solvents))
-                    max_10_sim_j_storage = np.zeros(len(solvents))
+            K1_i = K1s[2]
+            K2_i = K2s[2]
+            K1_j = K1s[4]
+            K2_j = K2s[4]
             
-            for s, solvent in enumerate(tqdm(solvents)):
-                if AD == 'both':
-                    ln_gamma_inf_i, feasible_sys_i, n_class_i_storage[s], max_10_sim_i_storage[s] = GH_GNN(c_i['smiles'], solvent).predict(T=T, AD=AD)
-                    ln_gamma_inf_j, feasible_sys_j, n_class_j_storage[s], max_10_sim_j_storage[s] = GH_GNN(c_j['smiles'], solvent).predict(T=T, AD=AD) 
-                elif AD is None:
-                    ln_gamma_inf_i = GH_GNN(c_i['smiles'], solvent).predict(T=T, AD=AD)
-                    ln_gamma_inf_j = GH_GNN(c_j['smiles'], solvent).predict(T=T, AD=AD)
-                else:
-                    raise Exception('Current implementation only supports AD="both" or AD=None')
+            for t, T in enumerate(Ts):
+                
+                P_i = P_i_lst[t]
+                P_j = P_j_lst[t]
+                
+                ln_gamma_inf_i = K1_i + K2_i/T
+                ln_gamma_inf_j = K1_j + K2_j/T
+                
                 gamma_inf_i = np.exp(ln_gamma_inf_i)
                 gamma_inf_j = np.exp(ln_gamma_inf_j)
+                
                 a_inf = get_relative_volatility(P_i, P_j, gamma_inf_i, gamma_inf_j)
                 
                 if a_inf < rv_threshold:
                      minSFs[s,t] = np.nan
                 else:
-                    c_k = {'smiles': solvent}
-                    gh_gnn_models = get_gh_gnn_models(c_i, c_j, c_k)
-                    ln_gammas_inf = get_gammas_GHGNN(gh_gnn_models, T=T, AD=None)
+                    ln_gammas_inf = get_gammas_GHGNN(K1s, K2s, T=T)
                     system = margules_system(*ln_gammas_inf)
                     
                     def Rela_Vola(SF):
@@ -399,33 +454,29 @@ class solvent_preselection():
                         gamma_i, gamma_j, gamma_k = system.get_gammas(x_i, x_j, x_k)
                         relative_volatilities = get_relative_volatility(P_i, P_j, gamma_i, gamma_j)
                         return (rv_threshold - min(relative_volatilities))**2
-                        
+                    
                     # Minimize function to get minSF
                     results = minimize_scalar(Rela_Vola, bounds=(0,10000), 
                                               method='bounded', options={'maxiter':2000})
                     minSFs[s,t] = results.x
-                    
-            if AD is not None:
-                df_AD = pd.DataFrame({
-                    'Solvent_SMILES':solvents,
-                    'Solvent_name':solvents_names,
-                    'n_class_i': n_class_i_storage,
-                    'n_class_j': n_class_j_storage,
-                    'max_10_sim_i': max_10_sim_i_storage,
-                    'max_10_sim_j': max_10_sim_j_storage,
-                    })
-                df_AD.to_csv(ad_file, index=False)
-                print(' ------ > AD computed!\n')
+        
+        
+        if AD is not None:
+            df_AD = pd.DataFrame({
+                'Solvent_SMILES':solvents,
+                'Solvent_name':solvents_names,
+                'n_class_i': n_class_i_storage,
+                'n_class_j': n_class_j_storage,
+                'max_10_sim_i': max_10_sim_i_storage,
+                'max_10_sim_j': max_10_sim_j_storage,
+                })
+            df_AD.to_csv(ad_file, index=False)
+            print(' ------ > AD computed!\n')
         
         df_results = pd.DataFrame(minSFs, columns=Ts)
         df_results.insert(0, 'Solvent_SMILES', solvents)
         df_results.insert(1, 'Solvent_name', solvents_names)
         df_results.to_csv('results/'+mixture_type+'/'+mixture+'_minSF.csv', index=False)
-
-
-    
-
-
 
     
 def get_selectivity(gamma_inf_i:float, gamma_inf_j:float):
@@ -447,7 +498,6 @@ def get_selectivity(gamma_inf_i:float, gamma_inf_j:float):
     '''
     s_ij = gamma_inf_i/gamma_inf_j
     return s_ij
-
 
 
 
@@ -622,7 +672,7 @@ def get_pseudo_binary_VLE_isobaric_thermo(c_i:dict, c_j:dict, c_k:dict, P:float,
     
 
 def get_pseudo_binary_VLE_isobaric(c_i:dict, c_j:dict, P:float, 
-                                     gh_gnn_models:list, SF:float, bounds):
+                                     K1s:list, K2s:list, SF:float, bounds):
     '''
     Computes the vapor and liquid fractions of the key components in the 
     pseudo-binary VLE at the given pressure in bar
@@ -635,8 +685,10 @@ def get_pseudo_binary_VLE_isobaric(c_i:dict, c_j:dict, P:float,
         Info of component j
     P : float
         Pressure of the system in bar.
-    gh_gnn_models : list
-        Collection of GH-GNN models.
+    K1s : list
+        Collection of K1 parameters for GH-GNN models.
+    K2s : list
+         Collection of K2 parameters for GH-GNN models.
     SF : float
         Solvent to feed ratio.
     bounds : tuple
@@ -665,8 +717,8 @@ def get_pseudo_binary_VLE_isobaric(c_i:dict, c_j:dict, P:float,
             P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
             P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
             
-            gammas = get_gammas_GHGNN(gh_gnn_models, T=T, AD=None)
-            system = margules_system(*gammas)
+            ln_gammas = get_gammas_GHGNN(K1s, K2s, T=T)
+            system = margules_system(*ln_gammas)
             
             gamma_i, gamma_j, gamma_k = system.get_gammas(x_i[i], x_j[i], x_k[i])
             
@@ -686,8 +738,8 @@ def get_pseudo_binary_VLE_isobaric(c_i:dict, c_j:dict, P:float,
         P_i = get_vapor_pressure_Antoine(Ai, Bi, Ci, T)
         P_j = get_vapor_pressure_Antoine(Aj, Bj, Cj, T)
         
-        gammas = get_gammas_GHGNN(gh_gnn_models, T=T, AD=None)
-        system = margules_system(*gammas)
+        ln_gammas = get_gammas_GHGNN(K1s, K2s, T=T)
+        system = margules_system(*ln_gammas)
         
         gamma_i, gamma_j, gamma_k = system.get_gammas(x_i[i], x_j[i], x_k[i])
         
@@ -737,7 +789,7 @@ def plot_pseudoVLE(SFs, VLEs_lst, exp_lst, c_1, c_2, c_3, T_P,
     plt.close(fig)
     name = c_1['name'] + ',' + c_2['name'] + ',' + c_3['name']
     fig.savefig(folder_figures+fig_name+'_'+name+'.png', dpi=300, format='png')
-    fig.savefig(folder_figures+fig_name+'_'+name+'.svg', dpi=300, format='svg')
+    # fig.savefig(folder_figures+fig_name+'_'+name+'.svg', dpi=300, format='svg')
     
 def plot_relative_vola_SFs(SFs, alphas_lst, VLEs_lst, c_1, c_2, c_3, T, 
                               folder_figures, model):
@@ -761,7 +813,7 @@ def plot_relative_vola_SFs(SFs, alphas_lst, VLEs_lst, c_1, c_2, c_3, T,
     plt.close(fig)
     name = c_1['name'] + ',' + c_2['name'] + ',' + c_3['name']
     fig.savefig(folder_figures+fig_name+'_'+name+'.png', dpi=300, format='png')
-    #fig.savefig(folder_figures+fig_name+'_'+name+'.svg', dpi=300, format='svg')
+    # fig.savefig(folder_figures+fig_name+'_'+name+'.svg', dpi=300, format='svg')
     
             
    

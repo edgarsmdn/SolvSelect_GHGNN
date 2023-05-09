@@ -164,7 +164,6 @@ class GH_GNN():
                                          map_location=torch.device(available_device)))
         self.device   = torch.device(available_device)
         self.model    = model.to(self.device)
-        self.classyfire_count = 0
         self.first_query = time.time()
         
         self.interpolation = self.check_interpolation(self.solvent, self.solute)
@@ -172,18 +171,10 @@ class GH_GNN():
     def classify_mol(self, mol):
         inchikey = Chem.inchi.MolToInchiKey(mol)
         url = 'http://classyfire.wishartlab.com/entities/' + str(inchikey) + '.json'
-        if self.classyfire_count == 0:
-            self.first_query = time.time()
         
-        if self.classyfire_count >= 12:
-            while time.time() - self.first_query < 60:
-                time.sleep(0.1)
-            self.classyfire_count = 0
         try:
-            self.classyfire_count += 1
             with urllib.request.urlopen(url) as webpage:
-                data = json.loads(webpage.read().decode())
-                
+                data = json.loads(webpage.read().decode())    
             if data['class']['name'] is None:
                 raise Exception()
             return data
@@ -213,6 +204,7 @@ class GH_GNN():
     def indicator_class(self, solvent, solute):
         solute_class = self.classify_mol(solute)
         solvent_class = self.classify_mol(solvent)
+        time.sleep(1)
         
         solute_class = solute_class['class']['name'] if solute_class != None else ''
         solvent_class = solvent_class['class']['name'] if solvent_class != None else ''
@@ -325,9 +317,7 @@ class GH_GNN():
         
         return graph_solu, graph_solv
     
-    def predict(self, T, AD='both'):
-        
-        T = T - 273.15 # GHGNN is trained with T in C
+    def get_AD(self, AD='both'):
         solute = self.solute
         solvent = self.solvent
         
@@ -348,7 +338,6 @@ class GH_GNN():
                 n_class = self.indicator_class(solvent, solute)
                 if n_class < 25:
                     feasible_sys = False
-            
         elif AD=='class':
             if self.interpolation:
                 feasible_sys = True
@@ -371,6 +360,18 @@ class GH_GNN():
             feasible_sys = None
         else:
             raise Exception('Invalid value for AD')
+        if AD is None:
+            return None
+        elif AD == 'class':
+            return feasible_sys, n_class
+        elif AD == 'tanimoto':
+            return feasible_sys, max_10_sim
+        elif AD == 'both':
+            return feasible_sys, n_class, max_10_sim
+    
+    def predict(self, T, constants=False):
+        
+        T = T - 273.15 # GHGNN is trained with T in C
         
         g_solute, g_solvent = self.g_solute, self.g_solvent
         
@@ -391,16 +392,17 @@ class GH_GNN():
                 batch_T       = batch_T.to(self.device)
                
                 if torch.cuda.is_available():
-                    ln_gamma_ij  = self.model(batch_solvent.cuda(), batch_solute.cuda(), batch_T.cuda()).cpu()
-                    ln_gamma_ij  = ln_gamma_ij.numpy().reshape(-1,)[0]
+                    pred  = self.model(batch_solvent.cuda(), batch_solute.cuda(), batch_T.cuda(), constants=constants).cpu()
                 else:
-                    ln_gamma_ij  = self.model(batch_solvent, batch_solute, batch_T).numpy().reshape(-1,)[0]
-                
-        if AD is None:
-            return ln_gamma_ij
-        elif AD == 'class':
-            return ln_gamma_ij, feasible_sys, n_class
-        elif AD == 'tanimoto':
-            return ln_gamma_ij, feasible_sys, max_10_sim
+                    pred  = self.model(batch_solvent, batch_solute, batch_T, constants=constants)
+                if constants:
+                    K1, K2 = pred
+                    K1 = K1.numpy().reshape(-1,)[0]
+                    K2 = K2.numpy().reshape(-1,)[0]
+                else:
+                    ln_gamma_ij  = pred.numpy().reshape(-1,)[0]
+        if constants:
+            return K1, K2
         else:
-            return ln_gamma_ij, feasible_sys, n_class, max_10_sim
+            return ln_gamma_ij
+        
