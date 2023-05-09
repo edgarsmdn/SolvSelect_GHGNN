@@ -1,6 +1,6 @@
 # Solvent pre-selection for extractive distillation
 
-This repo contains the code used in the paper Solvent pre-selection for extractive distillation using Gibbs-Helmholtz Graph Neural Networks submitted to [ESCAPE-33](https://escape33-ath.gr/). This work uses the version v1.0.0 of GH-GNN which is contained in its [own repo](https://github.com/edgarsmdn/GH-GNN).
+This repo contains the code used in the paper Solvent pre-selection for extractive distillation using Gibbs-Helmholtz Graph Neural Networks submitted to [ESCAPE-33](https://escape33-ath.gr/). This work uses the version v2.0.0 of GH-GNN.
 
 To cite this work use:
 
@@ -14,8 +14,9 @@ To cite GH-GNN use:
 @article{sanchez2022ghgnn,
   title={Gibbs-Helmholtz Graph Neural Network: capturing the temperature dependency of activity coefficients at infinite dilution},
   author={Sanchez Medina, Edgar Ivan and Linke, Steffen and Stoll, Martin and Sundmacher, Kai},
-  journal={arXiv preprint arXiv:2212.01199},
-  year={2022}
+  journal={Digital Discovery},
+  DOI={10.1039/D2DD00142J},
+  year={2023}
 }
 ```
 
@@ -45,7 +46,7 @@ mixture = {
         }
 
 solvents = [...] # list of solvents SMILES
-AD = ... # Applicability domain strategy to be applied to GH-GNN (either 'both' or None)
+AD = ... # Applicability domain strategy to be applied to GH-GNN (either 'both', 'class', 'tanimoto or None)
 
 sp = solvent_preselection(mixture, solvents, AD)
 sp.screen_with_rv()
