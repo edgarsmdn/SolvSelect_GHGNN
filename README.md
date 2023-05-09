@@ -1,6 +1,6 @@
 # Solvent pre-selection for extractive distillation
 
-This repo contains the code used in the paper Solvent pre-selection for extractive distillation using Gibbs-Helmholtz Graph Neural Networks submitted to [ESCAPE-33](https://escape33-ath.gr/). This work uses the version v2.0.0 of GH-GNN.
+This repo contains the code used in the paper Solvent pre-selection for extractive distillation using the [Gibbs-Helmholtz Graph Neural Network](https://doi.org/10.1039/D2DD00142J) submitted to [ESCAPE-33](https://escape33-ath.gr/). This work uses the version v2.0.0 of GH-GNN.
 
 To cite this work use:
 
