@@ -5,7 +5,15 @@ This repo contains the code used in the paper Solvent pre-selection for extracti
 To cite this work use:
 
 ```
-Reference coming soon
+@incollection{sanchez2023solvent,
+  title={Solvent pre-selection for extractive distillation using Gibbs-Helmholtz Graph Neural Networks},
+  author={Sanchez Medina, Edgar Ivan and Sundmacher, Kai},
+  booktitle={Computer Aided Chemical Engineering},
+  volume={52},
+  pages={2037--2042},
+  year={2023},
+  publisher={Elsevier}
+}
 ```
 
 To cite GH-GNN use:
